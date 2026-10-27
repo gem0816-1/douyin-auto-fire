@@ -5,8 +5,36 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.browser import AuthenticationError
+from app.douyin import PageOperationError, TargetSearchTimeoutError
 from app.models import Message, Settings, Target, TaskConfig
 import app.main as main_module
+
+
+@pytest.mark.asyncio
+async def test_target_search_timeout_retries_before_succeeding(monkeypatch) -> None:
+    chat = MagicMock()
+    chat.open_target = AsyncMock(side_effect=[TargetSearchTimeoutError("搜索结果等待超时"), None])
+    sleep = AsyncMock()
+    monkeypatch.setattr(main_module.asyncio, "sleep", sleep)
+
+    await main_module._open_target_with_retry(chat, "好友A", max_retries=1)
+
+    assert chat.open_target.await_count == 2
+    sleep.assert_awaited_once_with(3.0)
+
+
+@pytest.mark.asyncio
+async def test_explicit_empty_search_does_not_retry(monkeypatch) -> None:
+    chat = MagicMock()
+    chat.open_target = AsyncMock(side_effect=PageOperationError("搜索不到目标好友：页面提示未搜索到相关内容"))
+    sleep = AsyncMock()
+    monkeypatch.setattr(main_module.asyncio, "sleep", sleep)
+
+    with pytest.raises(PageOperationError, match="未搜索到相关内容"):
+        await main_module._open_target_with_retry(chat, "好友A", max_retries=1)
+
+    chat.open_target.assert_awaited_once_with("好友A", retries=0)
+    sleep.assert_not_awaited()
 
 
 def _settings(tmp_path) -> Settings:

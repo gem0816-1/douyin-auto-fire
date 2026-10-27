@@ -12,6 +12,10 @@ class PageOperationError(RuntimeError):
     pass
 
 
+class TargetSearchTimeoutError(PageOperationError):
+    """Search did not produce a matching row or a visible empty state in time."""
+
+
 RETRY_DELAY_MS = 3_000
 
 
@@ -45,13 +49,39 @@ class DouyinChat:
         await search.click()
         await search.fill("")
         await search.fill(name)
-        await self.page.wait_for_timeout(1_500)
-
-        result = await self._search_result(name)
-        if result is None:
-            raise PageOperationError("搜索不到目标好友")
+        result = await self._wait_for_search_result(name)
         await result.click(force=True)
         await self._confirm_opened(name)
+
+    async def _wait_for_search_result(self, name: str) -> Locator:
+        deadline = asyncio.get_running_loop().time() + self.timeout_ms / 1000
+        # Preserve the debounce grace period: a previous query's rows can remain
+        # visible briefly after fill(), particularly when switching recipients.
+        if self.timeout_ms > 0:
+            await self.page.wait_for_timeout(min(1_500, self.timeout_ms))
+        while True:
+            result = await self._search_result(name)
+            if result is not None:
+                return result
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            await self.page.wait_for_timeout(min(500, remaining * 1000))
+
+        # Do not treat an empty state as final before the deadline: it can still
+        # belong to the previous query while the new search is loading.
+        empty = self.page.locator('[class*="SearchPanelempty_title"]').first
+        if await empty.count() and await empty.is_visible():
+            if (await empty.inner_text(timeout=500)).strip() == "未搜索到相关内容":
+                raise PageOperationError(
+                    "搜索不到目标好友：页面提示未搜索到相关内容。"
+                    "请使用同一账号在抖音网页版私信中手动搜索，"
+                    "核对配置的好友名称是否能搜到，及是否与结果显示名称一致"
+                )
+        raise TargetSearchTimeoutError(
+            "好友搜索结果等待超时，尚未匹配到目标。可能是结果加载慢、"
+            "名称与结果不一致或页面结构变化，可重试并检查失败截图"
+        )
 
     async def _search_result(self, name: str) -> Locator | None:
         # Search mode renders a separate SearchPanel. Its "发消息" action is the

@@ -54,7 +54,7 @@ def classify_error(exc: Exception) -> ErrorCategory:
         错误类别
     """
     from app.browser import AuthenticationError, RiskControlError, SearchBoxNotReadyError
-    from app.douyin import PageOperationError
+    from app.douyin import PageOperationError, TargetSearchTimeoutError
     from app.config import ConfigError
 
     # 认证失效 - 立即停止
@@ -68,6 +68,10 @@ def classify_error(exc: Exception) -> ErrorCategory:
     # 配置错误 - 永久性错误
     if isinstance(exc, ConfigError):
         return ErrorCategory.PERMANENT
+
+    # Absence of a matching DOM node does not prove the friend does not exist.
+    if isinstance(exc, TargetSearchTimeoutError):
+        return ErrorCategory.TRANSIENT
 
     error_msg = str(exc).lower()
 

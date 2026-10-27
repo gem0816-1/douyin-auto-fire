@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.douyin import DouyinChat, PageOperationError
+from app.douyin import DouyinChat, PageOperationError, TargetSearchTimeoutError
 from app.selectors import CHAT_PANEL_MARKERS, MESSAGE_INPUTS
 
 
@@ -14,8 +14,12 @@ async def test_search_failure_raises_without_page_text_or_real_name(monkeypatch)
     search.click = AsyncMock()
     search.fill = AsyncMock()
     monkeypatch.setattr("app.douyin.first_visible", AsyncMock(return_value=search))
-    chat = DouyinChat(page)
+    chat = DouyinChat(page, timeout_ms=0)
     chat._search_result = AsyncMock(return_value=None)
+    empty = page.locator.return_value.first
+    empty.count = AsyncMock(return_value=1)
+    empty.is_visible = AsyncMock(return_value=True)
+    empty.inner_text = AsyncMock(return_value="未搜索到相关内容")
 
     with pytest.raises(PageOperationError, match="搜索不到目标好友") as exc_info:
         await chat._open_target_once("张三")
@@ -23,6 +27,54 @@ async def test_search_failure_raises_without_page_text_or_real_name(monkeypatch)
     message = str(exc_info.value)
     assert "当前页面文字" not in message
     assert "张三" not in message
+
+
+@pytest.mark.asyncio
+async def test_open_target_waits_for_delayed_results(monkeypatch) -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    search = MagicMock(click=AsyncMock(), fill=AsyncMock())
+    result = MagicMock(click=AsyncMock())
+    monkeypatch.setattr("app.douyin.first_visible", AsyncMock(return_value=search))
+    chat = DouyinChat(page)
+    # The result is still absent at the old fixed 1.5-second cutoff.
+    chat._search_result = AsyncMock(side_effect=[None, None, None, None, result])
+    chat._confirm_opened = AsyncMock()
+
+    await chat._open_target_once("张三")
+
+    assert [call.args[0] for call in page.wait_for_timeout.await_args_list] == [1_500, 500, 500, 500, 500]
+    result.click.assert_awaited_once_with(force=True)
+    chat._confirm_opened.assert_awaited_once_with("张三")
+
+
+@pytest.mark.asyncio
+async def test_search_without_visible_empty_state_is_retryable() -> None:
+    page = MagicMock()
+    empty = page.locator.return_value.first
+    empty.count = AsyncMock(return_value=0)
+    chat = DouyinChat(page, timeout_ms=0)
+    chat._search_result = AsyncMock(return_value=None)
+
+    with pytest.raises(TargetSearchTimeoutError, match="搜索结果等待超时") as exc_info:
+        await chat._wait_for_search_result("张三")
+
+    assert "张三" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_hidden_empty_state_does_not_prove_friend_is_missing() -> None:
+    page = MagicMock()
+    empty = page.locator.return_value.first
+    empty.count = AsyncMock(return_value=1)
+    empty.is_visible = AsyncMock(return_value=False)
+    chat = DouyinChat(page, timeout_ms=0)
+    chat._search_result = AsyncMock(return_value=None)
+
+    with pytest.raises(TargetSearchTimeoutError):
+        await chat._wait_for_search_result("张三")
+
+    empty.inner_text.assert_not_called()
 
 
 def _locator_group(items: list[MagicMock]) -> MagicMock:
