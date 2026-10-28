@@ -12,6 +12,10 @@ class PageOperationError(RuntimeError):
     pass
 
 
+class SearchResultNotReadyError(PageOperationError):
+    """No matching result appeared in time; this does not prove absence."""
+
+
 RETRY_DELAY_MS = 3_000
 
 
@@ -45,13 +49,30 @@ class DouyinChat:
         await search.click()
         await search.fill("")
         await search.fill(name)
-        await self.page.wait_for_timeout(1_500)
 
-        result = await self._search_result(name)
-        if result is None:
-            raise PageOperationError("搜索不到目标好友")
+        result = await self._wait_for_search_result(name)
         await result.click(force=True)
         await self._confirm_opened(name)
+
+    async def _wait_for_search_result(self, name: str) -> Locator:
+        # The input can mount well before IM has finished syncing contacts.
+        # Even the empty-state panel can be visible during that interval.
+        # Only a matching result is conclusive; give delayed rendering the full
+        # configured search budget and let the caller retry after a timeout.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.timeout_ms / 1000
+        while True:
+            result = await self._search_result(name)
+            if result is not None:
+                return result
+            remaining_ms = (deadline - loop.time()) * 1000
+            if remaining_ms <= 0:
+                raise SearchResultNotReadyError(
+                    f"等待好友搜索结果超时（{self.timeout_ms / 1000:g} 秒）；"
+                    "私信数据可能尚未加载完成，请稍后重试；"
+                    "若持续失败，请核对当前登录账号和私信显示名称"
+                )
+            await self.page.wait_for_timeout(min(500, remaining_ms))
 
     async def _search_result(self, name: str) -> Locator | None:
         # Search mode renders a separate SearchPanel. Its "发消息" action is the
@@ -323,12 +344,19 @@ async def _group_name_matches(locator: Locator, expected: str) -> bool:
 
 
 async def first_visible(page: Page, selectors: tuple[str, ...], timeout_ms: int = 15_000) -> Locator:
-    per_selector = max(500, timeout_ms // max(1, len(selectors)))
-    for selector in selectors:
-        locator = page.locator(selector).first
-        try:
-            await locator.wait_for(state="visible", timeout=per_selector)
-            return locator
-        except Exception:
-            continue
-    raise PageOperationError(f"找不到页面元素，已尝试: {', '.join(selectors)}")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_ms / 1000
+    candidates = [page.locator(selector).filter(visible=True).first for selector in selectors]
+    while True:
+        # Probe every alternative immediately. Waiting out each missing selector
+        # in turn delayed an already visible composer by ~26 seconds at 60s.
+        for locator in candidates:
+            try:
+                if await locator.is_visible():
+                    return locator
+            except Exception:
+                continue
+        remaining_ms = (deadline - loop.time()) * 1000
+        if remaining_ms <= 0:
+            raise PageOperationError(f"找不到页面元素，已尝试: {', '.join(selectors)}")
+        await page.wait_for_timeout(min(100, remaining_ms))

@@ -5,7 +5,7 @@ import pytest
 
 from app.browser import AuthenticationError, RiskControlError, SearchBoxNotReadyError
 from app.config import ConfigError
-from app.douyin import PageOperationError
+from app.douyin import PageOperationError, SearchResultNotReadyError
 from app.errors import (
     ErrorCategory,
     RetryStrategy,
@@ -42,6 +42,11 @@ class TestErrorClassification:
         """搜索框未就绪应该归类为 TRANSIENT（可重试）。"""
         exc = SearchBoxNotReadyError("搜索框未就绪")
         assert classify_error(exc) == ErrorCategory.TRANSIENT
+
+    def test_search_result_not_ready_allows_retry(self):
+        exc = SearchResultNotReadyError("等待搜索超时，尚未找到匹配结果")
+        assert classify_error(exc) == ErrorCategory.TRANSIENT
+        assert get_retry_strategy(exc).max_retries > 0
 
     def test_page_operation_timeout(self):
         """页面操作超时应该归类为 TRANSIENT。"""

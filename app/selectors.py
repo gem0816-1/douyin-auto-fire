@@ -23,6 +23,12 @@ SEARCH_INPUTS = (
     'input[aria-label*="搜索"]',
     '[role="textbox"][aria-label*="搜索"]',
 )
+CONVERSATION_LIST_ITEMS = (
+    '[data-e2e="conversation-item"]',
+    '[class*="conversationConversationItemtitle"]',
+    '[class*="conversation-item-title"]',
+    '[class*="ConversationItemTitle"]',
+)
 CHAT_PANEL_MARKERS = (
     '[class*="RightPanelHeader"]',
     '[class*="chatHeader"]',

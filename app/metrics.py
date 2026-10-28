@@ -27,6 +27,8 @@ class Metrics:
     average_message_time_seconds: float = 0.0
     min_message_time_seconds: float | None = None
     max_message_time_seconds: float | None = None
+    message_duration_seconds: float = 0.0
+    timed_messages: int = 0
 
     # 错误统计
     error_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
@@ -72,6 +74,8 @@ class Metrics:
 
     def record_message_time(self, duration_seconds: float):
         """记录单条消息发送时间。"""
+        self.message_duration_seconds += duration_seconds
+        self.timed_messages += 1
         if self.min_message_time_seconds is None:
             self.min_message_time_seconds = duration_seconds
         else:
@@ -93,7 +97,10 @@ class Metrics:
         self.total_targets = self.successful_targets + self.failed_targets
 
         # 计算平均时间
-        if self.successful_messages > 0 and self.total_duration_seconds > 0:
+        if self.timed_messages:
+            self.average_message_time_seconds = self.message_duration_seconds / self.timed_messages
+        elif self.successful_messages > 0 and self.total_duration_seconds > 0:
+            # Compatibility for metrics produced without individual timings.
             self.average_message_time_seconds = self.total_duration_seconds / self.successful_messages
 
     def to_dict(self) -> dict:

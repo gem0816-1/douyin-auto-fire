@@ -2,6 +2,7 @@
 .env.account*
 !.env.account.example
 .venv/
+.tools/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -9,6 +10,9 @@ artifacts/*
 !artifacts/.gitkeep
 config/tasks.json
 config/tasks/
+config/accounts.json
 config.json
+cookie.json
 storage-state.json
+storage-state.json.tmp
 storage_state/

@@ -10,10 +10,18 @@ from app.browser import (
     _collect_safe_diagnostic,
     _normalize_cookies,
     _safe_url,
+    _wait_for_conversation_list,
     open_private_messages,
 )
 from app.config import ConfigError
 from app.selectors import DOUYIN_CHAT_URL, LOGIN_REQUIRED_MARKERS, RISK_MARKERS
+
+
+@pytest.fixture(autouse=True)
+def list_wait(monkeypatch):
+    wait = AsyncMock(return_value=True)
+    monkeypatch.setattr("app.browser._wait_for_conversation_list", wait)
+    return wait
 
 
 @pytest.mark.asyncio
@@ -107,7 +115,7 @@ async def test_open_private_messages_logs_diagnostic_when_search_missing(caplog)
 
 
 @pytest.mark.asyncio
-async def test_search_hit_emits_no_diagnostic(caplog) -> None:
+async def test_search_hit_waits_for_list_without_diagnostic(caplog, list_wait) -> None:
     page = MagicMock()
     page.goto = AsyncMock()
     page.wait_for_timeout = AsyncMock()
@@ -118,7 +126,78 @@ async def test_search_hit_emits_no_diagnostic(caplog) -> None:
                 await open_private_messages(page)
 
     assert "页面安全诊断" not in caplog.text
-    page.wait_for_timeout.assert_awaited_once_with(3_000)
+    list_wait.assert_awaited_once_with(page, 60_000)
+    page.wait_for_timeout.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_conversation_list_waits_for_delayed_rows(monkeypatch) -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator.return_value.count = AsyncMock(side_effect=[0, 0, 32])
+    monkeypatch.setattr("app.browser._any_visible_now", AsyncMock(return_value=False))
+
+    assert await _wait_for_conversation_list(page, 60_000) is True
+
+    assert page.wait_for_timeout.await_count == 2
+    # Hidden cached rows must not satisfy readiness.
+    selector = page.locator.call_args.args[0]
+    assert all(part.strip().endswith(":visible") for part in selector.split(","))
+
+
+@pytest.mark.asyncio
+async def test_empty_conversation_list_has_bounded_wait(monkeypatch, caplog) -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator.return_value.count = AsyncMock(return_value=0)
+    monkeypatch.setattr("app.browser._any_visible_now", AsyncMock(return_value=False))
+    loop = MagicMock()
+    loop.time.side_effect = [0, 0, 0, 0.2]
+    monkeypatch.setattr("app.browser.asyncio.get_running_loop", lambda: loop)
+
+    with caplog.at_level(logging.WARNING, logger="douyin_sender"):
+        assert await _wait_for_conversation_list(page, 200) is False
+
+    page.wait_for_timeout.assert_awaited_once_with(200)
+    assert "列表仍为空" in caplog.text
+    assert "继续尝试好友搜索" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_conversation_sync_stops_if_risk_appears(monkeypatch) -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    page.locator.return_value.count = AsyncMock(return_value=0)
+    monkeypatch.setattr(
+        "app.browser._any_visible_now", AsyncMock(side_effect=[False, False, True])
+    )
+
+    with pytest.raises(RiskControlError, match="同步私信列表"):
+        await _wait_for_conversation_list(page, 60_000)
+
+    page.wait_for_timeout.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_conversation_sync_detects_expired_login(monkeypatch) -> None:
+    page = MagicMock()
+    monkeypatch.setattr(
+        "app.browser._any_visible_now", AsyncMock(side_effect=[False, True])
+    )
+
+    with pytest.raises(AuthenticationError, match="同步私信列表时登录状态失效"):
+        await _wait_for_conversation_list(page, 60_000)
+
+
+@pytest.mark.asyncio
+async def test_conversation_list_uses_requested_timeout(list_wait) -> None:
+    page = MagicMock()
+    page.goto = AsyncMock()
+    with patch("app.browser._any_visible", new=AsyncMock(return_value=False)):
+        with patch("app.browser._first_visible_selector", new=AsyncMock(return_value='input[placeholder="搜索"]')):
+            await open_private_messages(page, list_timeout_ms=25_000)
+
+    list_wait.assert_awaited_once_with(page, 25_000)
 
 
 @pytest.mark.asyncio

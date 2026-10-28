@@ -5,8 +5,22 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.browser import AuthenticationError
+from app.douyin import SearchResultNotReadyError
 from app.models import Message, Settings, Target, TaskConfig
 import app.main as main_module
+
+
+@pytest.mark.asyncio
+async def test_search_result_not_ready_retries_in_main_workflow(monkeypatch) -> None:
+    chat = MagicMock()
+    chat.open_target = AsyncMock(side_effect=[SearchResultNotReadyError("等待搜索结果超时"), None])
+    sleep = AsyncMock()
+    monkeypatch.setattr(main_module.asyncio, "sleep", sleep)
+
+    await main_module._open_target_with_retry(chat, "好友A", max_retries=1)
+
+    assert chat.open_target.await_count == 2
+    sleep.assert_awaited_once_with(3.0)
 
 
 def _settings(tmp_path) -> Settings:

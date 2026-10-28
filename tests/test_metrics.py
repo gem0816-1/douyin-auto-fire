@@ -84,6 +84,19 @@ class TestMetrics:
         assert metrics.average_message_time_seconds == pytest.approx(2.0)
         assert metrics.finished_at != ""
 
+    def test_average_uses_message_timings_without_startup_time(self):
+        metrics = Metrics()
+        metrics.total_duration_seconds = 114.7
+        metrics.record_target_success(2)
+        metrics.record_message_time(33.7)
+        metrics.record_message_time(33.8)
+
+        metrics.finalize()
+
+        assert metrics.average_message_time_seconds == pytest.approx(33.75)
+        assert metrics.timed_messages == 2
+        assert metrics.message_duration_seconds == pytest.approx(67.5)
+
     def test_save_and_load(self, tmp_path: Path):
         """测试保存和加载指标。"""
         metrics = Metrics()

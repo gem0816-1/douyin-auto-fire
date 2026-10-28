@@ -63,7 +63,9 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
             # 阶段2: 验证登录
             multi_stage.start_stage(1)
             try:
-                await open_private_messages(page)
+                await open_private_messages(
+                    page, list_timeout_ms=int(task.target_open_timeout_seconds * 1000)
+                )
                 multi_stage.finish_stage()
             except Exception as exc:
                 multi_stage.finish_stage()
@@ -117,11 +119,17 @@ async def run(dry_run: bool = False, env_file: str | None = None) -> int:
                                     history.reserve(key)
 
                                 # 发送单条消息并计时
-                                msg_start = time.time()
+                                msg_start = time.perf_counter()
                                 await verify_login(page, timeout_ms=3_000)
+                                login_checked = time.perf_counter()
                                 await send_message(page, chat, message, task.stickers)
-                                msg_duration = time.time() - msg_start
+                                msg_duration = time.perf_counter() - msg_start
                                 metrics.record_message_time(msg_duration)
+                                LOGGER.info(
+                                    "消息已发送: %s #%d（登录检查 %.2f 秒，发送确认 %.2f 秒）",
+                                    alias, message_index + 1, login_checked - msg_start,
+                                    msg_duration - (login_checked - msg_start),
+                                )
 
                                 if task.prevent_duplicates:
                                     history.mark_success(key)

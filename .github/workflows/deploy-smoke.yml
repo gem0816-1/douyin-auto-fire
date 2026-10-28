@@ -1,0 +1,46 @@
+name: Desktop deployment smoke test
+
+on:
+  push:
+    paths:
+      - 'deploy.*'
+      - 'scripts/deploy.py'
+      - 'requirements.txt'
+      - '.gitattributes'
+      - '.github/workflows/deploy-smoke.yml'
+  pull_request:
+    paths:
+      - 'deploy.*'
+      - 'scripts/deploy.py'
+      - 'requirements.txt'
+      - '.gitattributes'
+      - '.github/workflows/deploy-smoke.yml'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Windows first deployment
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\deploy.bat setup
+      - name: macOS first deployment
+        if: runner.os == 'macOS'
+        run: sh ./deploy.sh setup
+      - name: Windows cached deployment (offline)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          UV_OFFLINE: '1'
+        run: .\deploy.bat setup
+      - name: macOS cached deployment (offline)
+        if: runner.os == 'macOS'
+        env:
+          UV_OFFLINE: '1'
+        run: sh ./deploy.command setup

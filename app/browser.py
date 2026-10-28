@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -14,6 +15,7 @@ from app.config import ConfigError, parse_auth_json
 from app.models import Settings
 from app.selectors import (
     DOUYIN_CHAT_URL,
+    CONVERSATION_LIST_ITEMS,
     LOGIN_MARKERS,
     LOGIN_REQUIRED_MARKERS,
     RISK_MARKERS,
@@ -109,15 +111,23 @@ async def open_douyin(settings: Settings) -> AsyncIterator[BrowserSession]:
 
 
 async def verify_login(page: Page, timeout_ms: int = 15_000) -> None:
-    if await _any_visible(page, RISK_MARKERS, timeout_ms=2_000):
+    if await _any_visible_now(page, RISK_MARKERS):
         raise RiskControlError("抖音要求进行安全验证，任务已停止")
-    if await _any_visible(page, LOGIN_REQUIRED_MARKERS, timeout_ms=2_000):
+    if await _any_visible_now(page, LOGIN_REQUIRED_MARKERS):
         raise AuthenticationError("抖音登录状态已失效")
-    if not await _any_visible(page, LOGIN_MARKERS, timeout_ms=timeout_ms):
-        raise AuthenticationError("未检测到抖音私信页面，登录状态可能失效或页面结构已变化")
+    if await _first_visible_selector(page, LOGIN_MARKERS, timeout_ms) is not None:
+        return
+    # A prompt may have appeared during the positive-marker wait.
+    if await _any_visible_now(page, RISK_MARKERS):
+        raise RiskControlError("抖音要求进行安全验证，任务已停止")
+    if await _any_visible_now(page, LOGIN_REQUIRED_MARKERS):
+        raise AuthenticationError("抖音登录状态已失效")
+    raise AuthenticationError("未检测到抖音私信页面，登录状态可能失效或页面结构已变化")
 
 
-async def open_private_messages(page: Page, timeout_ms: int = 15_000) -> None:
+async def open_private_messages(
+    page: Page, timeout_ms: int = 15_000, *, list_timeout_ms: int = 60_000
+) -> None:
     await page.goto(DOUYIN_CHAT_URL, wait_until="domcontentloaded", timeout=45_000)
     # 1. Explicit risk-control page takes priority, independently of login state.
     if await _any_visible(page, RISK_MARKERS, timeout_ms=2_000):
@@ -136,7 +146,7 @@ async def open_private_messages(page: Page, timeout_ms: int = 15_000) -> None:
         matched = await _first_visible_selector(page, SEARCH_INPUTS, timeout_ms)
         if matched is not None:
             LOGGER.info("检测到好友搜索框: selector=%s, 第 %d 次尝试", matched, attempt)
-            await page.wait_for_timeout(3_000)
+            await _wait_for_conversation_list(page, list_timeout_ms)
             return
         # The search box is missing; a freshly shown login prompt may only have
         # appeared during the wait, so re-check before deciding to retry.
@@ -165,6 +175,51 @@ async def open_private_messages(page: Page, timeout_ms: int = 15_000) -> None:
     raise SearchBoxNotReadyError(f"私信页面已打开，但搜索框在 {SEARCH_BOX_RETRIES} 次重试后仍未就绪")
 
 
+async def _wait_for_conversation_list(page: Page, timeout_ms: int) -> bool:
+    """Wait for visible conversations before search hides the normal list.
+
+    An empty-state illustration can also appear while IM is syncing, so it
+    cannot confirm readiness. A truly empty account must still be allowed to
+    search friends after this bounded wait.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_ms / 1000
+    items = page.locator(
+        ", ".join(f"{selector}:visible" for selector in CONVERSATION_LIST_ITEMS)
+    )
+    LOGGER.info("正在同步私信会话列表，最多等待 %g 秒…", timeout_ms / 1000)
+    next_progress = loop.time() + 10
+    while True:
+        if await _any_visible_now(page, RISK_MARKERS):
+            raise RiskControlError("同步私信列表时要求进行安全验证，任务已停止")
+        if await _any_visible_now(page, LOGIN_REQUIRED_MARKERS):
+            raise AuthenticationError("同步私信列表时登录状态失效")
+        count = await items.count()
+        if count:
+            LOGGER.info("私信会话列表已显示（当前可见条目: %d）", count)
+            return True
+        now = loop.time()
+        remaining_ms = (deadline - now) * 1000
+        if remaining_ms <= 0:
+            LOGGER.warning(
+                "等待 %g 秒后私信会话列表仍为空；可能仍在同步或账号暂无会话，将继续尝试好友搜索",
+                timeout_ms / 1000,
+            )
+            return False
+        if now >= next_progress:
+            LOGGER.info("私信会话列表尚未显示，继续等待同步…")
+            next_progress = now + 10
+        await page.wait_for_timeout(min(500, remaining_ms))
+
+
+async def _any_visible_now(page: Page, selectors: tuple[str, ...]) -> bool:
+    # No per-selector wait: this runs during polling under a shared deadline.
+    for selector in selectors:
+        if await page.locator(selector).filter(visible=True).first.is_visible():
+            return True
+    return False
+
+
 async def save_trace(session: BrowserSession, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     await session.context.tracing.stop(path=path)
@@ -191,14 +246,17 @@ async def _first_visible_selector(
     Unlike ``_any_visible`` this also reports *which* selector matched, so the
     diagnostic can distinguish a slow render from a structural change.
     """
-    per_selector = max(250, timeout_ms // max(1, len(selectors)))
-    for selector in selectors:
-        try:
-            await page.locator(selector).first.wait_for(state="visible", timeout=per_selector)
-            return selector
-        except Exception:
-            continue
-    return None
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout_ms / 1000
+    candidates = [(selector, page.locator(selector).filter(visible=True).first) for selector in selectors]
+    while True:
+        for selector, locator in candidates:
+            if await locator.is_visible():
+                return selector
+        remaining_ms = (deadline - loop.time()) * 1000
+        if remaining_ms <= 0:
+            return None
+        await page.wait_for_timeout(min(100, remaining_ms))
 
 
 async def _collect_safe_diagnostic(

@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.douyin import DouyinChat, PageOperationError
+from app.douyin import DouyinChat, PageOperationError, SearchResultNotReadyError
 from app.selectors import CHAT_PANEL_MARKERS, MESSAGE_INPUTS
 
 
@@ -14,15 +14,55 @@ async def test_search_failure_raises_without_page_text_or_real_name(monkeypatch)
     search.click = AsyncMock()
     search.fill = AsyncMock()
     monkeypatch.setattr("app.douyin.first_visible", AsyncMock(return_value=search))
-    chat = DouyinChat(page)
+    chat = DouyinChat(page, timeout_ms=0)
     chat._search_result = AsyncMock(return_value=None)
+    chat._confirm_opened = AsyncMock()
 
-    with pytest.raises(PageOperationError, match="搜索不到目标好友") as exc_info:
+    with pytest.raises(SearchResultNotReadyError, match="等待好友搜索结果超时") as exc_info:
         await chat._open_target_once("张三")
 
     message = str(exc_info.value)
     assert "当前页面文字" not in message
     assert "张三" not in message
+    chat._confirm_opened.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_open_target_waits_for_delayed_search_result(monkeypatch) -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    search = MagicMock()
+    search.click = AsyncMock()
+    search.fill = AsyncMock()
+    monkeypatch.setattr("app.douyin.first_visible", AsyncMock(return_value=search))
+    result = MagicMock()
+    result.click = AsyncMock()
+    chat = DouyinChat(page)
+    chat._search_result = AsyncMock(side_effect=[None, None, result])
+    chat._confirm_opened = AsyncMock()
+
+    await chat._open_target_once("好友A")
+
+    assert chat._search_result.await_count == 3
+    assert page.wait_for_timeout.await_count == 2
+    result.click.assert_awaited_once_with(force=True)
+    chat._confirm_opened.assert_awaited_once_with("好友A")
+
+
+@pytest.mark.asyncio
+async def test_search_wait_respects_timeout_budget(monkeypatch) -> None:
+    page = MagicMock()
+    page.wait_for_timeout = AsyncMock()
+    chat = DouyinChat(page, timeout_ms=125)
+    chat._search_result = AsyncMock(return_value=None)
+    loop = MagicMock()
+    loop.time.side_effect = [0, 0, 0.125]
+    monkeypatch.setattr("app.douyin.asyncio.get_running_loop", lambda: loop)
+
+    with pytest.raises(SearchResultNotReadyError):
+        await chat._wait_for_search_result("好友A")
+
+    page.wait_for_timeout.assert_awaited_once_with(125)
 
 
 def _locator_group(items: list[MagicMock]) -> MagicMock:

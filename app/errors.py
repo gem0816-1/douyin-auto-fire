@@ -54,7 +54,7 @@ def classify_error(exc: Exception) -> ErrorCategory:
         错误类别
     """
     from app.browser import AuthenticationError, RiskControlError, SearchBoxNotReadyError
-    from app.douyin import PageOperationError
+    from app.douyin import PageOperationError, SearchResultNotReadyError
     from app.config import ConfigError
 
     # 认证失效 - 立即停止
@@ -68,6 +68,11 @@ def classify_error(exc: Exception) -> ErrorCategory:
     # 配置错误 - 永久性错误
     if isinstance(exc, ConfigError):
         return ErrorCategory.PERMANENT
+
+    # An empty search panel can precede contact sync. It is not evidence that
+    # the friend is missing, regardless of wording added to the diagnostic.
+    if isinstance(exc, (SearchBoxNotReadyError, SearchResultNotReadyError)):
+        return ErrorCategory.TRANSIENT
 
     error_msg = str(exc).lower()
 
