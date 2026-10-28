@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   sync:
+    if: github.repository == 'unmev/douyin-auto-fire'
     runs-on: ubuntu-latest
 
     steps:

@@ -22,6 +22,7 @@ permissions:
 
 jobs:
   docker:
+    if: github.repository == 'unmev/douyin-auto-fire'
     runs-on: ubuntu-latest
 
     steps:
