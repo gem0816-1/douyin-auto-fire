@@ -17,8 +17,10 @@
 | --- | --- | --- |
 | 扫码登录 | `.\deploy.bat login` | `sh ./deploy.sh login` |
 | 试运行，不发送 | `.\deploy.bat dry-run` | `sh ./deploy.sh dry-run` |
-| 正式执行一次 | `.\deploy.bat run` | `sh ./deploy.sh run` |
+| 正式执行一次 | `.\start.bat` | `sh ./start.sh` |
 | 更新依赖 | `.\deploy.bat --refresh` | `sh ./deploy.sh --refresh` |
+
+配置并登录后，Windows 双击 `start.bat`，macOS 双击 `start.command` 即可启动。每次执行一次任务，浏览器窗口隐藏；ZIP 下载的 macOS 用户先运行 `chmod +x start.command`。
 
 详细配置、下载加速和定时运行见 [一键部署教程](docs/quick-deploy.md)。
 

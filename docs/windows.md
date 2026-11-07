@@ -4,6 +4,8 @@
 
 想快速准备环境，可以直接双击项目根目录的 `deploy.bat`，自动安装所需环境并设置 `HEADLESS=true` 隐藏日常运行的浏览器窗口，再运行 `.\deploy.bat login` 和 `.\deploy.bat dry-run`。扫码登录时仍会显示浏览器。完整说明见 [Windows / macOS 一键部署](quick-deploy.md)；下文保留手动安装步骤。
 
+配置并登录后，双击根目录的 `start.bat` 即可执行一次发送任务，浏览器窗口保持隐藏。只验证不发送时，执行 `.\start.bat dry-run`。
+
 > Windows 电脑需要在任务执行时保持开机并联网。第一次建议先配置 1 个账号、1 个好友、1 条文字消息，先把单账号跑通，再增加多账号或通知。
 
 ---

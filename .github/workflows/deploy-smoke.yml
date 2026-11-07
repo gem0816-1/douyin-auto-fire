@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'deploy.*'
+      - 'start.*'
       - 'scripts/deploy.py'
       - 'requirements.txt'
       - '.gitattributes'
@@ -11,6 +12,7 @@ on:
   pull_request:
     paths:
       - 'deploy.*'
+      - 'start.*'
       - 'scripts/deploy.py'
       - 'requirements.txt'
       - '.gitattributes'
@@ -44,3 +46,10 @@ jobs:
         env:
           UV_OFFLINE: '1'
         run: sh ./deploy.command setup
+      - name: Windows startup entry point (help only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: .\start.bat --help
+      - name: macOS startup entry point (help only)
+        if: runner.os == 'macOS'
+        run: sh ./start.command --help

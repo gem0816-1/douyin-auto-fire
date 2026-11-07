@@ -48,6 +48,14 @@ chmod +x deploy.command
 | 更新允许范围内的依赖 | `.\deploy.bat --refresh` | `sh ./deploy.sh --refresh` |
 | 查看帮助 | `.\deploy.bat --help` | `sh ./deploy.sh --help` |
 
+## 一键启动
+
+完成配置和登录后：Windows 双击根目录的 `start.bat`；macOS 双击 `start.command`，或在终端运行 `sh ./start.sh`。ZIP 下载的 macOS 用户先执行一次 `chmod +x start.command`。
+
+默认正式执行一次配置中的发送任务，浏览器窗口隐藏，终端保留运行结果。启动会复用已有环境；缺少环境时自动调用部署流程。首次使用仍需先填写好友和消息并登录。
+
+如需只验证、不发送，Windows 执行 `.\start.bat dry-run`，macOS 执行 `sh ./start.sh dry-run`。也可以通过启动入口传入 `login` 或 `--help`，与部署入口使用相同的参数。
+
 每个命令都会检查环境，不需要手动激活 `.venv`。脚本始终从项目目录运行，支持含空格或中文的路径。已有配置除 `HEADLESS` 外保留，登录凭证不变；缺少的 `.env` 和 `config.json` 从对应 example 文件生成。使用 Cookie 或多账号时，按已有教程配置，跳过单账号 `login`。
 
 ## 为什么后续部署更快
